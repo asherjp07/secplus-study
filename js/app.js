@@ -86,6 +86,98 @@ function toast(msg) {
   const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
   setTimeout(() => t.remove(), 3500);
 }
+/* ---------- audio: answer sounds (generated, no files) ---------- */
+let SOUND = LS.get('sound', true), ACX = null;
+const TONES = {
+  ok: [[523.25, 0, 0.12], [659.25, 0.09, 0.12], [783.99, 0.18, 0.28]],
+  part: [[523.25, 0, 0.14], [587.33, 0.13, 0.24]],
+  bad: [[233.08, 0, 0.2, 'square'], [174.61, 0.17, 0.34, 'square']],
+  pass: [[523.25, 0, 0.14], [659.25, 0.12, 0.14], [783.99, 0.24, 0.14], [1046.5, 0.36, 0.5]],
+  fail: [[392, 0, 0.22, 'square'], [349.23, 0.2, 0.22, 'square'], [261.63, 0.4, 0.5, 'square']],
+  card: [[880, 0, 0.08]]
+};
+function sfx(kind) {
+  if (!SOUND || !TONES[kind]) return;
+  try {
+    ACX = ACX || new (window.AudioContext || window.webkitAudioContext)();
+    if (ACX.state === 'suspended') ACX.resume();
+    const t0 = ACX.currentTime + 0.02;
+    TONES[kind].forEach(([f, d, len, type]) => {
+      const o = ACX.createOscillator(), g = ACX.createGain();
+      o.type = type || 'triangle'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + d);
+      g.gain.exponentialRampToValueAtTime(type ? 0.06 : 0.25, t0 + d + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + len);
+      o.connect(g); g.connect(ACX.destination); o.start(t0 + d); o.stop(t0 + d + len + 0.05);
+    });
+  } catch (e) { /* audio not available */ }
+}
+const sndBtn = document.createElement('button'); sndBtn.className = 'btn ghost sm'; sndBtn.id = 'sndBtn';
+const sndLbl = () => (sndBtn.textContent = SOUND ? '🔊 Sounds on' : '🔇 Sounds off');
+sndLbl(); document.getElementById('themeBtn').after(sndBtn);
+sndBtn.onclick = () => { SOUND = !SOUND; LS.set('sound', SOUND); sndLbl(); if (SOUND) sfx('ok'); };
+
+/* ---------- audio: read lessons aloud (browser speech) ---------- */
+const SY = window.speechSynthesis && window.SpeechSynthesisUtterance ? window.speechSynthesis : null;
+const TTS = { rate: LS.get('ttsRate', 1), voice: LS.get('ttsVoice', ''), auto: LS.get('ttsAuto', false), oid: null, i: 0, on: false, gen: 0, autostart: false };
+const ttsItems = () => [...document.querySelectorAll('#view [data-say]')];
+const ttsVoices = () => (SY ? SY.getVoices().filter((v) => /^en/i.test(v.lang)) : []);
+const sayText = (el) => (el.dataset.say || el.textContent).replace(/→/g, ' to ').replace(/[•·]/g, ', ').replace(/\s+/g, ' ').trim();
+function ttsHalt() { TTS.gen++; TTS.on = false; if (SY) SY.cancel(); }
+function ttsUI() {
+  const items = ttsItems(), n = items.length, b = document.getElementById('ttsPlay'); if (!b) return;
+  b.textContent = TTS.on ? '❚❚ Pause' : TTS.i > 0 && TTS.i < n ? '▶ Resume' : '▶ Listen';
+  items.forEach((el, k) => el.classList.toggle('speaking', TTS.on && k === TTS.i));
+  document.getElementById('ttsPos').textContent = n ? `${Math.min(TTS.i + 1, n)} / ${n}` : '';
+  document.getElementById('ttsBar').style.width = (n ? (TTS.i / n) * 100 : 0) + '%';
+}
+function ttsSpeak() {
+  const items = ttsItems();
+  if (TTS.i >= items.length) {
+    TTS.on = false; TTS.i = 0; ttsUI();
+    const ids = ALLOBJ, k = ids.indexOf(TTS.oid);
+    if (TTS.auto && k >= 0 && k < ids.length - 1) { TTS.autostart = true; go('#study-' + String(ids[k + 1]).replace('.', '-')); }
+    return;
+  }
+  const el = items[TTS.i], u = new SpeechSynthesisUtterance(sayText(el)), my = TTS.gen;
+  const v = ttsVoices().find((x) => x.name === TTS.voice);
+  if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-US';
+  u.rate = TTS.rate;
+  u.onend = () => { if (my !== TTS.gen || !TTS.on) return; TTS.i++; ttsSpeak(); };
+  u.onerror = (e) => { if (my !== TTS.gen || (e && (e.error === 'interrupted' || e.error === 'canceled'))) return; TTS.on = false; ttsUI(); toast('Read-aloud stopped: this browser could not play speech.'); };
+  ttsUI(); if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  SY.speak(u);
+}
+function ttsJump(d) { const n = ttsItems().length, was = TTS.on; ttsHalt(); TTS.i = Math.max(0, Math.min(n - 1, TTS.i + d)); if (was) { TTS.on = true; ttsSpeak(); } else ttsUI(); }
+function ttsPanel() {
+  if (!SY) return `<div class="card tts"><div class="muted small">🎧 Read-aloud is not supported in this browser. Try Chrome, Edge or Safari.</div></div>`;
+  return `<div class="card tts"><div class="row between" style="flex-wrap:wrap;gap:10px">
+   <div class="row" style="flex-wrap:wrap"><button class="btn pri" id="ttsPlay" data-act="run" data-fn="ttsplay">▶ Listen</button>
+    <button class="btn sm ghost" data-act="run" data-fn="ttsprev" title="Previous">⏮</button><button class="btn sm ghost" data-act="run" data-fn="ttsnext" title="Next">⏭</button><button class="btn sm ghost" data-act="run" data-fn="ttsstop" title="Stop">■</button>
+    <span id="ttsPos" class="muted small"></span></div>
+   <div class="row" style="flex-wrap:wrap"><select id="ttsRate" aria-label="Speed">${[0.75, 1, 1.25, 1.5, 1.75].map((r) => `<option value="${r}" ${r === TTS.rate ? 'selected' : ''}>${r}×</option>`).join('')}</select>
+    <select id="ttsVoice" aria-label="Voice" style="max-width:190px"></select>
+    <label class="check" style="margin:0"><input type="checkbox" id="ttsAuto" ${TTS.auto ? 'checked' : ''}><span class="small">Auto-play next objective</span></label></div></div>
+   <div class="bar" style="margin-top:10px"><span id="ttsBar" style="width:0;background:var(--acc)"></span></div>
+   <div class="muted small" style="margin-top:6px">Tap any note to listen from there.</div></div>`;
+}
+function ttsFillVoices() {
+  const s = document.getElementById('ttsVoice'); if (!s) return;
+  const vs = ttsVoices(); s.style.display = vs.length ? '' : 'none';
+  s.innerHTML = `<option value="">Default voice</option>` + vs.map((v) => `<option ${v.name === TTS.voice ? 'selected' : ''}>${esc(v.name)}</option>`).join('');
+}
+if (SY) SY.onvoiceschanged = ttsFillVoices;
+function ttsBind(oid) {
+  if (TTS.oid !== oid) { TTS.oid = oid; TTS.i = 0; }
+  if (!SY) return;
+  ttsFillVoices();
+  document.getElementById('ttsRate').onchange = (e) => { TTS.rate = +e.target.value; LS.set('ttsRate', TTS.rate); if (TTS.on) ttsJump(0); };
+  document.getElementById('ttsVoice').onchange = (e) => { TTS.voice = e.target.value; LS.set('ttsVoice', TTS.voice); if (TTS.on) ttsJump(0); };
+  document.getElementById('ttsAuto').onchange = (e) => { TTS.auto = e.target.checked; LS.set('ttsAuto', TTS.auto); };
+  ttsItems().forEach((el, k) => { el.classList.add('sayable'); el.onclick = (e) => { if (e.target.closest('a,button')) return; ttsHalt(); TTS.i = k; TTS.on = true; ttsSpeak(); }; });
+  if (TTS.autostart) { TTS.autostart = false; TTS.i = 0; TTS.on = true; ttsSpeak(); } else ttsUI();
+}
+
 const CAP = (n) => (window.claude && window.claude.use ? window.claude.use(n).catch(() => null) : Promise.resolve(null));
 document.getElementById('menuBtn').onclick = () => document.getElementById('side').classList.toggle('open');
 
@@ -252,7 +344,7 @@ async function finish(force) {
   const p = tot / S.qids.length;
   S.done = true; S.res = { pct: p, scaled: Math.round(100 + 800 * p), bd, ok, n: S.qids.length, time: Math.round((Date.now() - S.t0) / 1000) };
   HI.unshift({ t: Date.now(), mode: S.mode, title: S.title, n: S.res.n, pct: p, scaled: S.res.scaled, bd, time: S.res.time }); HI = HI.slice(0, 200);
-  save(); saveS(); go('#results');
+  save(); saveS(); go('#results'); sfx(S.res.scaled >= 750 ? 'pass' : 'fail');
 }
 function pick(pool, n) { return shuffle(pool).slice(0, n).map((q) => q.id); }
 function buildExam(n, pbqN) {
@@ -312,7 +404,10 @@ const CMD = {
   prev: () => { if (S.idx > 0) { S.idx--; saveS(); vQuiz(true); } },
   next: () => { if (S.idx < S.qids.length - 1) { S.idx++; saveS(); vQuiz(true); } else if (!S.done) finish(); },
   goto: (i) => { S.idx = +i; saveS(); if (location.hash.startsWith('#quiz')) vQuiz(true); else go('#quiz'); },
-  check: () => { const id = S.qids[S.idx]; if (S.chk[id]) return; S.chk[id] = true; record(id, gradeQ(getQ(id))); saveS(); vQuiz(); },
+  check: () => { const id = S.qids[S.idx]; if (S.chk[id]) return; S.chk[id] = true; const g = gradeQ(getQ(id)); record(id, g); sfx(g >= 0.999 ? 'ok' : g > 0 ? 'part' : 'bad'); saveS(); vQuiz(); },
+  ttsplay: () => { if (TTS.on) { ttsHalt(); ttsUI(); } else { if (TTS.i >= ttsItems().length) TTS.i = 0; TTS.on = true; ttsSpeak(); } },
+  ttsstop: () => { ttsHalt(); TTS.i = 0; ttsUI(); },
+  ttsprev: () => ttsJump(-1), ttsnext: () => ttsJump(1),
   finish: () => finish(),
   flag: () => { const id = S.qids[S.idx]; if (FL[id]) delete FL[id]; else FL[id] = 1; save(); vQuiz(); },
   exit: () => go('#dashboard'),
@@ -352,6 +447,7 @@ function fcRate(g) {
   if (g === 0) { s.b = 0; s.due = Date.now() + 60e3; FC.list.push(c); }
   else if (g === 1) { s.b = Math.max(1, s.b); s.due = Date.now() + INT[s.b] * DAY * 0.5; }
   else { s.b = Math.min(6, s.b + (g === 3 ? 2 : 1)); s.due = Date.now() + INT[s.b] * DAY; }
+  sfx(g === 0 ? 'bad' : g === 1 ? 'card' : 'ok');
   CD[c.id] = s; save(); FC.i++; FC.done++; FC.flip = false; vCards();
 }
 
@@ -363,6 +459,7 @@ function route() {
   const parts = [p0, di < 0 ? '' : hs.slice(di + 1).replace(/-/g, '.')], name = routes[p0] ? p0 : 'dashboard';
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === name || (name === 'quiz' || name === 'results') && a.dataset.r === (S && S.mode === 'exam' ? 'exam' : 'practice')));
   document.getElementById('side').classList.remove('open');
+  if (!TTS.autostart && (TTS.on || (SY && SY.speaking))) ttsHalt();
   routes[name](parts[1] ? decodeURIComponent(parts[1]) : undefined);
   window.scrollTo(0, 0); updResume(); tick();
 }
@@ -436,10 +533,11 @@ function vObj(oid) {
   const ids = ALLOBJ, i = ids.indexOf(oid);
   V.innerHTML = `<div class="row"><a href="#study" class="btn sm ghost">← All objectives</a></div>
   <div class="row" style="margin-top:12px"><span class="dnum" style="background:${d.color}">${d.id}</span><span class="muted">${esc(d.name)}</span></div>
-  <h1 style="margin-top:8px"><span class="oid">${oid}</span> ${esc(o.title)}</h1>
+  <h1 style="margin-top:8px" data-say="Objective ${oid}. ${esc(o.title)}."><span class="oid">${oid}</span> ${esc(o.title)}</h1>
+  ${ttsPanel()}
   <div class="grid" style="grid-template-columns:minmax(0,1fr) 300px;align-items:start">
-   <div><div class="card"><h2>Key notes</h2><ul class="notes">${o.notes.map((n) => `<li>${fmt(n)}</li>`).join('')}</ul></div>
-   ${gl.length ? `<div class="card"><h2>Key terms</h2><table>${gl.map((g) => `<tr><td style="width:34%"><b>${esc(g[0])}</b></td><td>${esc(g[1])}</td></tr>`).join('')}</table></div>` : ''}</div>
+   <div><div class="card"><h2>Key notes</h2><ul class="notes">${o.notes.map((n) => `<li data-say="">${fmt(n)}</li>`).join('')}</ul></div>
+   ${gl.length ? `<div class="card"><h2>Key terms</h2><table>${gl.map((g) => `<tr data-say="${esc(g[0])}. ${esc(g[1])}"><td style="width:34%"><b>${esc(g[0])}</b></td><td>${esc(g[1])}</td></tr>`).join('')}</table></div>` : ''}</div>
    <div class="card sticky"><h3>Practice this objective</h3><div class="muted small">${qs.length} questions · ${s.n ? pct(s.p) + ' accuracy' : 'not started'}</div>
     <div style="margin:10px 0">${byT.map(([t, n]) => `<span class="pill" style="margin:0 4px 4px 0">${TL[t]} · ${n}</span>`).join('')}</div>
     <button class="btn pri" style="width:100%;justify-content:center" data-act="run" data-fn="obj" data-arg="${oid}">Start (${qs.length})</button>
@@ -447,6 +545,7 @@ function vObj(oid) {
     <div class="row between" style="margin-top:14px">${i > 0 ? `<a class="btn sm ghost" href="#study-${String(ids[i - 1]).replace('.', '-')}">← ${ids[i - 1]}</a>` : '<span></span>'}${i < ids.length - 1 ? `<a class="btn sm ghost" href="#study-${String(ids[i + 1]).replace('.', '-')}">${ids[i + 1]} →</a>` : ''}</div></div>
   </div>`;
   if (innerWidth < 980) V.querySelector('.grid').style.gridTemplateColumns = '1fr';
+  ttsBind(oid);
 }
 
 function vPractice() {

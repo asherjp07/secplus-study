@@ -11,6 +11,12 @@
 }
 :root{color-scheme:dark}
 :root[data-theme="light"]{color-scheme:light}
+.tts{margin:12px 0}
+.tts select{background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:.85rem}
+.sayable{cursor:pointer;border-radius:6px;transition:background .2s}
+.sayable:hover{background:var(--card2)}
+.speaking,.speaking:hover{background:var(--sel);box-shadow:0 0 0 2px var(--acc)}
+li.speaking{padding:2px 6px;margin-left:-6px}
 .modal{position:fixed;inset:0;z-index:50;background:rgba(5,10,20,.55);display:grid;place-items:center;padding:16px}
 .modal-box{max-width:440px;width:100%}
 .modal-box p{margin:0 0 16px;font-size:1.02rem}
