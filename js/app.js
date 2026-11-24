@@ -152,6 +152,7 @@ function mkUtt(text) {
 }
 /* quiz read-aloud: question + choices, then result + answer + explanation */
 TTS.qauto = LS.get('ttsQAuto', false); TTS.qkey = null; TTS.what = null;
+TTS.fauto = LS.get('ttsFAuto', false); TTS.fkey = null;
 const plain = (html) => { const d = document.createElement('div'); d.innerHTML = html; return d.textContent; };
 const spk = (s) => String(s).replace(/_{2,}/g, ' blank ').replace(/✓/g, '').replace(/✗/g, '').replace(/◐/g, '').replace(/→/g, ' to ').replace(/[•·]/g, ', ').replace(/([:.])\s*,/g, '$1').replace(/\s+/g, ' ').trim();
 function sayList(list, what, delay) {
@@ -171,6 +172,8 @@ function qaUI() {
   const a = document.getElementById('qaRead'), b = document.getElementById('qaAns');
   if (a) a.textContent = TTS.on && TTS.what === 'q' ? '■ Stop' : '🔊 Read';
   if (b) b.textContent = TTS.on && TTS.what === 'a' ? '■ Stop' : '🔊 Read answer';
+  const f = document.getElementById('fcRead');
+  if (f) f.textContent = TTS.on && TTS.what === 'f' ? '■ Stop' : FC && FC.flip ? '🔊 Read answer' : '🔊 Read';
 }
 const P = (s) => plain(fmt(String(s)));
 function uSpeech(u, key) {
@@ -471,13 +474,15 @@ const CMD = {
   ttsprev: () => ttsJump(-1), ttsnext: () => ttsJump(1),
   qread: () => { if (TTS.on && TTS.what === 'q') { ttsHalt(); qaUI(); return; } sayList(qSpeech(getQ(S.qids[S.idx])), 'q'); },
   qans: () => { if (TTS.on && TTS.what === 'a') { ttsHalt(); qaUI(); return; } sayList(aSpeech(), 'a'); },
+  fcread: () => { if (TTS.on && TTS.what === 'f') { ttsHalt(); qaUI(); return; } sayList(fcSpeech(), 'f'); },
+  fcauto: () => { TTS.fauto = !TTS.fauto; LS.set('ttsFAuto', TTS.fauto); if (!TTS.fauto) ttsHalt(); TTS.fkey = null; vCards(); },
   qauto: () => { TTS.qauto = !TTS.qauto; LS.set('ttsQAuto', TTS.qauto); if (!TTS.qauto) ttsHalt(); TTS.qkey = null; vQuiz(); },
   finish: () => finish(),
   flag: () => { const id = S.qids[S.idx]; if (FL[id]) delete FL[id]; else FL[id] = 1; save(); vQuiz(); },
   exit: () => go('#dashboard'),
   results: () => go('#results'),
   review: (mode) => { S.idx = mode === 'wrong' ? Math.max(0, S.qids.findIndex((id) => gradeQ(getQ(id)) < 0.999)) : 0; saveS(); go('#quiz'); },
-  fcstart: (d) => fcStart(d), fcflip: () => { FC.flip = !FC.flip; vCards(); }, fcrate: (g) => fcRate(+g), fcend: () => { FC = null; vCards(); },
+  fcstart: (d) => fcStart(d), fcflip: () => { FC.flip = !FC.flip; vCards(); }, fcrate: (g) => fcRate(+g), fcend: () => { FC = null; TTS.fkey = null; if (TTS.on) ttsHalt(); vCards(); },
   pbtoggle: (o) => { const i = PB.objs.indexOf(o); i >= 0 ? PB.objs.splice(i, 1) : PB.objs.push(o); pbSave(); },
   pbdom: (d) => { const os = DOM[d].objectives.map((o) => o.id), all = os.every((o) => PB.objs.includes(o)); PB.objs = PB.objs.filter((o) => !os.includes(o)); if (!all) PB.objs.push(...os); pbSave(); },
   pbtype: (t) => { const i = PB.types.indexOf(t); i >= 0 ? PB.types.splice(i, 1) : PB.types.push(t); pbSave(); },
@@ -737,9 +742,20 @@ function vCards() {
   if (FC.i >= FC.list.length) { V.innerHTML = `<div class="empty"><h2>🎉 Session complete</h2><p>You reviewed ${FC.done} cards.</p><button class="btn pri" data-act="run" data-fn="fcend">Back to decks</button></div>`; return; }
   const c = FC.list[FC.i], front = FC.rev ? c.b : c.f, back = FC.rev ? c.f : c.b;
   V.innerHTML = `<div class="row between"><button class="btn sm ghost" data-act="run" data-fn="fcend">← Decks</button><span class="muted">${FC.i + 1} / ${FC.list.length}${c.o ? ' · Obj ' + c.o : ''}</span></div>
-  <div class="bar" style="margin:12px 0 22px"><span style="width:${(FC.i / FC.list.length) * 100}%"></span></div>
+  <div class="bar" style="margin:12px 0 12px"><span style="width:${(FC.i / FC.list.length) * 100}%"></span></div>
+  ${SY ? `<div class="row between" style="margin-bottom:12px;flex-wrap:wrap"><button class="btn sm ghost" id="fcRead" data-act="run" data-fn="fcread">🔊 Read</button><label class="check" style="margin:0"><input type="checkbox" data-act="run" data-fn="fcauto" ${TTS.fauto ? 'checked' : ''}><span class="small">🔊 Auto-read cards</span></label></div>` : ''}
   <div class="fc ${FC.flip ? 'flip' : ''}" data-act="run" data-fn="fcflip"><div class="inner"><div class="face">${FC.rev ? `<p>${esc(front)}</p>` : `<b>${esc(front)}</b>`}<div class="muted small" style="position:absolute;bottom:14px">click or press Space to flip</div></div><div class="face back">${FC.rev ? `<b>${esc(back)}</b>` : `<p>${esc(back)}</p>`}</div></div></div>
   <div class="rate" style="visibility:${FC.flip ? 'visible' : 'hidden'}"><button class="btn danger" data-act="run" data-fn="fcrate" data-arg="0">1 · Again</button><button class="btn" data-act="run" data-fn="fcrate" data-arg="1">2 · Hard</button><button class="btn pri" data-act="run" data-fn="fcrate" data-arg="2">3 · Good</button><button class="btn ok" data-act="run" data-fn="fcrate" data-arg="3">4 · Easy</button></div>`;
+  const fk = c.id + '|' + (FC.flip ? 1 : 0);
+  if (fk !== TTS.fkey) {
+    TTS.fkey = fk;
+    if (TTS.fauto && SY) sayList(fcSpeech(), 'f', FC.flip ? 0 : 250); else if (TTS.on) ttsHalt();
+  }
+  qaUI();
+}
+function fcSpeech() {
+  const c = FC.list[FC.i], front = FC.rev ? c.b : c.f, back = FC.rev ? c.f : c.b;
+  return FC.flip ? [back] : [front];
 }
 
 function vAcr() {
