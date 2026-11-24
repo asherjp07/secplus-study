@@ -22,11 +22,11 @@ const TYPES = ['mc', 'ms', 'tf', 'fill', 'match', 'order', 'cat', 'pbq'];
 const ALLOBJ = Object.keys(OBJ);
 
 /* ---------- state ---------- */
-let ST = LS.get('stats', {}), FL = LS.get('flags', {}), HI = LS.get('hist', []), CD = LS.get('cards', {});
+let ST = LS.get('stats', {}), FL = LS.get('flags', {}), HI = LS.get('hist', []), CD = LS.get('cards', {}), PJ = LS.get('proj', {});
 let S = LS.get('session', null);
 let PB = LS.get('pb', { objs: ALLOBJ.slice(), types: TYPES.slice(), src: 'all', n: 20, instant: true });
 let FC = null; const UI = { chip: null, ord: null };
-const saveLocal = () => { LS.set('stats', ST); LS.set('flags', FL); LS.set('hist', HI); LS.set('cards', CD); LS.set('upd', SYNC.upd); };
+const saveLocal = () => { LS.set('stats', ST); LS.set('flags', FL); LS.set('hist', HI); LS.set('cards', CD); LS.set('proj', PJ); LS.set('upd', SYNC.upd); };
 const save = () => { SYNC.upd = Date.now(); saveLocal(); queuePush(); };
 
 /* ---------- cross-device sync (hosted version only; private per signed-in user) ---------- */
@@ -39,12 +39,12 @@ function queuePush() { if (!SYNC.ref) return; clearTimeout(SYNC.timer); SYNC.tim
 async function push() {
   if (!SYNC.ref) return; if (SYNC.busy) { SYNC.again = true; return; }
   SYNC.busy = true; SYNC.state = 'saving'; syncBadge();
-  try { await SYNC.ref.set({ upd: SYNC.upd, data: JSON.stringify({ stats: ST, flags: FL, hist: HI, cards: CD }) }); SYNC.state = 'synced'; }
+  try { await SYNC.ref.set({ upd: SYNC.upd, data: JSON.stringify({ stats: ST, flags: FL, hist: HI, cards: CD, proj: PJ }) }); SYNC.state = 'synced'; }
   catch (e) { SYNC.state = 'error'; }
   SYNC.busy = false; syncBadge(); if (SYNC.again) { SYNC.again = false; push(); }
 }
 function adopt(d) {
-  try { const j = JSON.parse(d.data); ST = j.stats || {}; FL = j.flags || {}; HI = j.hist || []; CD = j.cards || {}; } catch (e) { return; }
+  try { const j = JSON.parse(d.data); ST = j.stats || {}; FL = j.flags || {}; HI = j.hist || []; CD = j.cards || {}; PJ = j.proj || {}; } catch (e) { return; }
   SYNC.upd = d.upd; saveLocal();
   if (!location.hash.startsWith('#quiz') && !(location.hash.startsWith('#flashcards') && FC)) route();
 }
@@ -122,7 +122,7 @@ const SY = window.speechSynthesis && window.SpeechSynthesisUtterance ? window.sp
 const TTS = { rate: LS.get('ttsRate', 1), voice: LS.get('ttsVoice', ''), auto: LS.get('ttsAuto', false), oid: null, i: 0, on: false, gen: 0, autostart: false };
 const ttsItems = () => [...document.querySelectorAll('#view [data-say]')];
 const ttsVoices = () => (SY ? SY.getVoices().filter((v) => /^en/i.test(v.lang)) : []);
-const sayText = (el) => (el.dataset.say || el.textContent).replace(/→/g, ' to ').replace(/[•·]/g, ', ').replace(/\s+/g, ' ').trim();
+const sayText = (el) => (el.dataset.say || el.textContent).replace(/[`*]/g, '').replace(/→/g, ' to ').replace(/[•·]/g, ', ').replace(/\s+/g, ' ').trim();
 function ttsHalt() { TTS.gen++; TTS.on = false; if (SY) SY.cancel(); }
 function ttsUI() {
   const items = ttsItems(), n = items.length, b = document.getElementById('ttsPlay'); if (!b) return;
@@ -213,7 +213,7 @@ function aSpeech() {
   return out;
 }
 function ttsJump(d) { const n = ttsItems().length, was = TTS.on; ttsHalt(); TTS.i = Math.max(0, Math.min(n - 1, TTS.i + d)); if (was) { TTS.on = true; ttsSpeak(); } else ttsUI(); }
-function ttsPanel() {
+function ttsPanel(noAuto) {
   if (!SY) return `<div class="card tts"><div class="muted small">🎧 Read-aloud is not supported in this browser. Try Chrome, Edge or Safari.</div></div>`;
   return `<div class="card tts"><div class="row between" style="flex-wrap:wrap;gap:10px">
    <div class="row" style="flex-wrap:wrap"><button class="btn pri" id="ttsPlay" data-act="run" data-fn="ttsplay">▶ Listen</button>
@@ -221,7 +221,7 @@ function ttsPanel() {
     <span id="ttsPos" class="muted small"></span></div>
    <div class="row" style="flex-wrap:wrap"><select id="ttsRate" aria-label="Speed">${[0.75, 1, 1.25, 1.5, 1.75].map((r) => `<option value="${r}" ${r === TTS.rate ? 'selected' : ''}>${r}×</option>`).join('')}</select>
     <select id="ttsVoice" aria-label="Voice" style="max-width:190px"></select>
-    <label class="check" style="margin:0"><input type="checkbox" id="ttsAuto" ${TTS.auto ? 'checked' : ''}><span class="small">Auto-play next objective</span></label></div></div>
+    ${noAuto ? '' : `<label class="check" style="margin:0"><input type="checkbox" id="ttsAuto" ${TTS.auto ? 'checked' : ''}><span class="small">Auto-play next objective</span></label>`}</div></div>
    <div class="bar" style="margin-top:10px"><span id="ttsBar" style="width:0;background:var(--acc)"></span></div>
    <div class="muted small" style="margin-top:6px">Tap any note to listen from there.</div></div>`;
 }
@@ -237,8 +237,8 @@ function ttsBind(oid) {
   ttsFillVoices();
   document.getElementById('ttsRate').onchange = (e) => { TTS.rate = +e.target.value; LS.set('ttsRate', TTS.rate); if (TTS.on) ttsJump(0); };
   document.getElementById('ttsVoice').onchange = (e) => { TTS.voice = e.target.value; LS.set('ttsVoice', TTS.voice); if (TTS.on) ttsJump(0); };
-  document.getElementById('ttsAuto').onchange = (e) => { TTS.auto = e.target.checked; LS.set('ttsAuto', TTS.auto); };
-  ttsItems().forEach((el, k) => { el.classList.add('sayable'); el.onclick = (e) => { if (e.target.closest('a,button')) return; ttsHalt(); TTS.i = k; TTS.on = true; ttsSpeak(); }; });
+  const au = document.getElementById('ttsAuto'); if (au) au.onchange = (e) => { TTS.auto = e.target.checked; LS.set('ttsAuto', TTS.auto); };
+  ttsItems().forEach((el, k) => { el.classList.add('sayable'); el.onclick = (e) => { if (e.target.closest('a,button,input,label')) return; ttsHalt(); TTS.i = k; TTS.on = true; ttsSpeak(); }; });
   if (TTS.autostart) { TTS.autostart = false; TTS.i = 0; TTS.on = true; ttsSpeak(); } else ttsUI();
 }
 
@@ -474,6 +474,16 @@ const CMD = {
   ttsprev: () => ttsJump(-1), ttsnext: () => ttsJump(1),
   qread: () => { if (TTS.on && TTS.what === 'q') { ttsHalt(); qaUI(); return; } sayList(qSpeech(getQ(S.qids[S.idx])), 'q'); },
   qans: () => { if (TTS.on && TTS.what === 'a') { ttsHalt(); qaUI(); return; } sayList(aSpeech(), 'a'); },
+  pjtog: (key) => {
+    if (PJ[key]) delete PJ[key]; else PJ[key] = 1; save();
+    const p = SP.projects.find((x) => x.id === key.split(':')[0]); if (!p) return;
+    pjRefresh(p); if (PJ[key]) { const s = pjStat(p); sfx(s.p >= 1 ? 'pass' : 'card'); if (s.p >= 1) toast(`🎉 Project complete: ${p.title}`); }
+  },
+  pjcopy: async (id) => {
+    const p = SP.projects.find((x) => x.id === id); if (!p) return;
+    try { await navigator.clipboard.writeText(p.bullet); toast('Resume bullet copied.'); }
+    catch (e) { const el = document.querySelector('.pjbullet'); const r = document.createRange(); r.selectNodeContents(el); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Selected. Press Ctrl+C (or long-press → Copy).'); }
+  },
   fcread: () => { if (TTS.on && TTS.what === 'f') { ttsHalt(); qaUI(); return; } sayList(fcSpeech(), 'f'); },
   fcauto: () => { TTS.fauto = !TTS.fauto; LS.set('ttsFAuto', TTS.fauto); if (!TTS.fauto) ttsHalt(); TTS.fkey = null; vCards(); },
   qauto: () => { TTS.qauto = !TTS.qauto; LS.set('ttsQAuto', TTS.qauto); if (!TTS.qauto) ttsHalt(); TTS.qkey = null; vQuiz(); },
@@ -489,13 +499,13 @@ const CMD = {
   pbsrc: (s) => { PB.src = s; pbSave(); }, pbn: (n) => { PB.n = +n; pbSave(); }, pbfb: (v) => { PB.instant = v === '1'; pbSave(); },
   pball: () => { PB.objs = ALLOBJ.slice(); pbSave(); }, pbnone: () => { PB.objs = []; pbSave(); },
   export: async () => {
-    const json = JSON.stringify({ stats: ST, flags: FL, hist: HI, cards: CD }), dl = await CAP('downloads');
+    const json = JSON.stringify({ stats: ST, flags: FL, hist: HI, cards: CD, proj: PJ }), dl = await CAP('downloads');
     if (dl) { try { await dl.save({ filename: 'secplus-progress.json', data: json }); } catch (e) { if (e && e.code && e.code !== 'declined' && e.code !== 'dismissed') toast('Export was not saved.'); } return; }
     if (window.claude) { toast('Export is not available here. Your progress syncs automatically.'); return; }
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' })); a.download = 'secplus-progress.json'; a.click();
   },
   import: () => document.getElementById('impFile').click(),
-  reset: async () => { if (await ask('Delete ALL progress, history, flags and flashcard data on every synced device? This cannot be undone.', 'Delete everything')) { ['session'].forEach(LS.del); ST = {}; FL = {}; HI = []; CD = {}; S = null; save(); route(); } }
+  reset: async () => { if (await ask('Delete ALL progress, history, flags, flashcard data and project checklists on every synced device? This cannot be undone.', 'Delete everything')) { ['session'].forEach(LS.del); ST = {}; FL = {}; HI = []; CD = {}; PJ = {}; S = null; save(); route(); } }
 };
 function pbSave() { LS.set('pb', PB); vPractice(); }
 function poolPB() {
@@ -521,7 +531,7 @@ function fcRate(g) {
 }
 
 /* ---------- router ---------- */
-const routes = { dashboard: vDash, study: vStudy, practice: vPractice, pbq: vPbq, exam: vExam, quiz: vQuiz, results: vResults, flashcards: vCards, acronyms: vAcr, review: vReview, progress: vProgress };
+const routes = { dashboard: vDash, study: vStudy, practice: vPractice, pbq: vPbq, exam: vExam, quiz: vQuiz, results: vResults, flashcards: vCards, acronyms: vAcr, review: vReview, progress: vProgress, projects: vProjects };
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
 function route() {
   const hs = (location.hash || '#dashboard').slice(1), di = hs.indexOf('-'), p0 = di < 0 ? hs : hs.slice(0, di);
@@ -577,6 +587,7 @@ function vDash() {
     ${qc('⚙', 'PBQ lab', `${nP} hands-on simulations`, '#pbq')}
     ${qc('❐', 'Flashcards', 'Spaced repetition decks', '#flashcards')}
   </div>
+  ${(() => { const t = pjTotals(), nx = SP.projects.find((p) => pjStat(p).p < 1); return `<div class="card pjbanner" style="margin-top:14px"><div class="row between" style="flex-wrap:wrap;gap:10px"><div><h3 style="margin:0">🚀 Career projects</h3><div class="muted small">${t.doneP} of ${SP.projects.length} job-ready labs complete · ${t.done}/${t.total} steps</div></div><a class="btn pri" href="#projects${nx ? '-' + nx.id : ''}">${t.done ? 'Continue' : 'Start'}${nx ? ': ' + esc(nx.title) : ''}</a></div><div class="bar" style="margin-top:10px"><span style="width:${t.total ? (t.done / t.total) * 100 : 0}%"></span></div></div>`; })()}
   <div class="grid g2" style="margin-top:14px">
     <div class="card"><h3>🎯 Focus areas</h3>${weak.length ? weak.map((x) => objRow(x.o, x.s)).join('') : '<div class="muted small">Answer some questions to see your weakest objectives.</div>'}
       ${untouched.length ? `<div class="muted small" style="margin-top:10px">Not started yet:</div>${untouched.map((o) => objRow(o, objStat(o))).join('')}` : ''}
@@ -791,9 +802,66 @@ function vProgress() {
    <div class="row" style="margin-top:12px"><button class="btn" data-act="run" data-fn="export">⬇ Export progress</button><button class="btn" data-act="run" data-fn="import">⬆ Import progress</button><button class="btn danger" data-act="run" data-fn="reset">Reset everything</button><input type="file" id="impFile" accept=".json" hidden></div></div>`;
   document.getElementById('impFile').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
-    rd.onload = () => { try { const j = JSON.parse(rd.result); ST = j.stats || {}; FL = j.flags || {}; HI = j.hist || []; CD = j.cards || {}; save(); toast('Progress imported.'); route(); } catch (err) { toast('That file is not a valid progress export.'); } };
+    rd.onload = () => { try { const j = JSON.parse(rd.result); ST = j.stats || {}; FL = j.flags || {}; HI = j.hist || []; CD = j.cards || {}; PJ = j.proj || {}; save(); toast('Progress imported.'); route(); } catch (err) { toast('That file is not a valid progress export.'); } };
     rd.readAsText(f);
   };
+}
+
+/* ---------- career projects ---------- */
+function pjKeys(p) { const k = []; p.steps.forEach((ph, a) => ph[1].forEach((s, b) => k.push(`${p.id}:s${a}.${b}`))); p.deliver.forEach((d, i) => k.push(`${p.id}:d${i}`)); return k; }
+function pjStat(p) { const k = pjKeys(p), done = k.filter((x) => PJ[x]).length; return { done, total: k.length, p: k.length ? done / k.length : 0 }; }
+function pjTotals() { let done = 0, total = 0, doneP = 0; SP.projects.forEach((p) => { const s = pjStat(p); done += s.done; total += s.total; if (s.p >= 1) doneP++; }); return { done, total, doneP }; }
+const pjPill = (s) => (s.p >= 1 ? '<span class="pill ok">✓ Done</span>' : s.done ? `<span class="pill warn">In progress · ${pct(s.p)}</span>` : '<span class="pill">Not started</span>');
+const pjBox = (key, text, say) => `<label class="check pjstep" ${say ? `data-say="${esc(say)}"` : ''}><input type="checkbox" data-act="run" data-fn="pjtog" data-arg="${key}" ${PJ[key] ? 'checked' : ''}><span>${fmt(text)}</span></label>`;
+function vProjects(pid) {
+  const p = SP.projects.find((x) => x.id === pid);
+  if (p) return vProject(p);
+  crumb('Career Projects');
+  const t = pjTotals();
+  V.innerHTML = `<h1>Career Projects</h1><div class="muted">${SP.projects.length} hands-on labs that prove to employers you can do the job. Do them <b>in order</b>: each one builds on the lab from the one before. Finish all of them and you will have a portfolio that most entry-level applicants do not have.</div>
+  <div class="card" style="margin-top:16px"><div class="row between" style="flex-wrap:wrap;gap:8px"><b>Your roadmap</b><span class="muted small">${t.doneP}/${SP.projects.length} projects complete · ${t.done}/${t.total} steps</span></div>
+   <div class="bar" style="margin-top:10px"><span id="pjAll" style="width:${t.total ? (t.done / t.total) * 100 : 0}%"></span></div></div>
+  <div class="grid g3" style="margin-top:14px">${SP.projects.map((x, i) => { const s = pjStat(x); return `<a class="card qcard pjcard" href="#projects-${x.id}" style="color:var(--tx)"><div class="row between"><span class="pjnum">${i + 1}</span>${pjPill(s)}</div>
+    <h3 style="margin:10px 0 4px">${x.icon} ${esc(x.title)}</h3><div class="muted small">${esc(x.level)} · ${esc(x.time)}</div>
+    <div style="margin-top:8px">${x.roles.map((r) => `<span class="pill" style="margin:0 4px 4px 0">${esc(r)}</span>`).join('')}</div>
+    <div class="bar" style="margin-top:10px"><span style="width:${s.p * 100}%"></span></div></a>`; }).join('')}</div>
+  <div class="card" style="margin-top:14px"><h3>⚠ Lab rules</h3><ul class="notes small">
+   <li>Only attack systems you own or have <b>written permission</b> to test. Your lab only.</li>
+   <li>Keep intentionally vulnerable VMs on an <b>isolated network</b> with no route to your home network or the Internet.</li>
+   <li>Set a <b>billing alarm</b> before using any cloud account, and delete resources when done.</li>
+   <li>Never commit passwords, API keys, real IP addresses or personal data to GitHub.</li>
+   <li>Snapshot VMs before every attack or hardening change so you can roll back.</li></ul></div>`;
+}
+function vProject(p) {
+  const i = SP.projects.indexOf(p), s = pjStat(p), prev = SP.projects[i - 1], next = SP.projects[i + 1];
+  crumb(`Career Projects › ${i + 1}`);
+  V.innerHTML = `<div class="row between"><a href="#projects" class="btn sm ghost">← All projects</a><span class="muted small">Project ${i + 1} of ${SP.projects.length}</span></div>
+  <h1 style="margin-top:12px" data-say="Project ${i + 1}. ${esc(p.title)}.">${p.icon} ${esc(p.title)}</h1>
+  <div>${[p.level, p.time].map((x) => `<span class="pill" style="margin:0 4px 4px 0">${esc(x)}</span>`).join('')}${p.roles.map((r) => `<span class="pill" style="margin:0 4px 4px 0;color:var(--acc2);border-color:var(--acc)">${esc(r)}</span>`).join('')}</div>
+  ${ttsPanel(true)}
+  <div class="grid pjgrid" style="grid-template-columns:minmax(0,1fr) 300px;align-items:start">
+   <div>
+    <div class="card"><h2>Why employers care</h2><p data-say="Why employers care. ${esc(p.why)}">${esc(p.why)}</p>
+     <h3 style="margin-top:14px">What you will have at the end</h3><p data-say="What you will have at the end. ${esc(p.build)}">${esc(p.build)}</p></div>
+    <div class="card"><h2>Steps</h2>${p.steps.map((ph, a) => `<h3 class="pjphase" data-say="Phase ${a + 1}: ${esc(ph[0])}.">${a + 1}. ${esc(ph[0])}</h3>${ph[1].map((st, b) => pjBox(`${p.id}:s${a}.${b}`, st, st)).join('')}`).join('')}</div>
+    <div class="card"><h2>Portfolio deliverables</h2><div class="muted small" style="margin-bottom:8px">This is what you show employers. Check each one off when it is published.</div>${p.deliver.map((d, k) => pjBox(`${p.id}:d${k}`, d, 'Deliverable: ' + d)).join('')}</div>
+    <div class="card"><div class="row between"><h2 style="margin:0">Resume bullet</h2><button class="btn sm" data-act="run" data-fn="pjcopy" data-arg="${p.id}">⧉ Copy</button></div>
+     <p class="pjbullet" data-say="Resume bullet. ${esc(p.bullet)}">${esc(p.bullet)}</p><div class="muted small">Replace the numbers with your real results.</div></div>
+    <div class="card"><h2>Interview questions to practice</h2><ul class="notes">${p.interview.map((q) => `<li data-say="${esc(q)}">${esc(q)}</li>`).join('')}</ul></div>
+    <div class="card"><h2>Stretch goals</h2><div class="muted small" style="margin-bottom:6px">Optional extras that make the project stand out.</div><ul class="notes">${p.stretch.map((q) => `<li>${esc(q)}</li>`).join('')}</ul></div>
+   </div>
+   <div class="card sticky"><div class="row between"><h3 style="margin:0">Progress</h3><span id="pjPill">${pjPill(s)}</span></div>
+    <div class="bar" style="margin:10px 0 4px"><span id="pjBar" style="width:${s.p * 100}%"></span></div><div class="muted small" id="pjCnt">${s.done}/${s.total} steps & deliverables</div>
+    <h3 style="margin-top:16px">Tools</h3><ul class="notes small">${p.tools.map((tl) => `<li><b>${esc(tl[0])}</b>${tl[1] ? ' – ' + esc(tl[1]) : ''}</li>`).join('')}</ul>
+    <h3 style="margin-top:12px">Security+ objectives</h3><div>${p.objs.filter((o) => OBJ[o]).map((o) => `<a class="pill" style="margin:0 4px 4px 0" href="#study-${o.replace('.', '-')}" title="${esc(OBJ[o].title)}">${o}</a>`).join('')}</div>
+    <div class="row between" style="margin-top:16px">${prev ? `<a class="btn sm ghost" href="#projects-${prev.id}">← ${i}</a>` : '<span></span>'}${next ? `<a class="btn sm ${s.p >= 1 ? 'pri' : 'ghost'}" href="#projects-${next.id}">Next: ${i + 2} →</a>` : ''}</div></div>
+  </div>`;
+  if (innerWidth < 980) V.querySelector('.pjgrid').style.gridTemplateColumns = '1fr';
+  ttsBind('proj:' + p.id);
+}
+function pjRefresh(p) {
+  const s = pjStat(p), b = document.getElementById('pjBar'); if (!b) return;
+  b.style.width = s.p * 100 + '%'; document.getElementById('pjCnt').textContent = `${s.done}/${s.total} steps & deliverables`; document.getElementById('pjPill').innerHTML = pjPill(s);
 }
 
 /* ---------- interaction ---------- */
