@@ -69,7 +69,7 @@ if (S && S.qids && S.qids.some((id) => !QM[id] && !(S.gen && S.gen[id]))) S = nu
 
 const th0 = LS.get('theme', null); if (th0) document.documentElement.dataset.theme = th0;
 document.getElementById('themeBtn').onclick = () => {
-  const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  const cur = document.documentElement.dataset.theme || 'dark';
   const t = cur === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; LS.set('theme', t);
 };
 
