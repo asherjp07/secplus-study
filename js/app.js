@@ -139,14 +139,75 @@ function ttsSpeak() {
     if (TTS.auto && k >= 0 && k < ids.length - 1) { TTS.autostart = true; go('#study-' + String(ids[k + 1]).replace('.', '-')); }
     return;
   }
-  const el = items[TTS.i], u = new SpeechSynthesisUtterance(sayText(el)), my = TTS.gen;
-  const v = ttsVoices().find((x) => x.name === TTS.voice);
-  if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-US';
-  u.rate = TTS.rate;
+  const el = items[TTS.i], u = mkUtt(sayText(el)), my = TTS.gen;
   u.onend = () => { if (my !== TTS.gen || !TTS.on) return; TTS.i++; ttsSpeak(); };
   u.onerror = (e) => { if (my !== TTS.gen || (e && (e.error === 'interrupted' || e.error === 'canceled'))) return; TTS.on = false; ttsUI(); toast('Read-aloud stopped: this browser could not play speech.'); };
   ttsUI(); if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   SY.speak(u);
+}
+function mkUtt(text) {
+  const u = new SpeechSynthesisUtterance(text), v = ttsVoices().find((x) => x.name === TTS.voice);
+  if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-US';
+  u.rate = TTS.rate; return u;
+}
+/* quiz read-aloud: question + choices, then result + answer + explanation */
+TTS.qauto = LS.get('ttsQAuto', false); TTS.qkey = null; TTS.what = null;
+const plain = (html) => { const d = document.createElement('div'); d.innerHTML = html; return d.textContent; };
+const spk = (s) => String(s).replace(/_{2,}/g, ' blank ').replace(/✓/g, '').replace(/✗/g, '').replace(/◐/g, '').replace(/→/g, ' to ').replace(/[•·]/g, ', ').replace(/([:.])\s*,/g, '$1').replace(/\s+/g, ' ').trim();
+function sayList(list, what, delay) {
+  if (!SY) { toast('Read-aloud is not supported in this browser.'); return; }
+  ttsHalt(); TTS.on = true; TTS.what = what; const my = TTS.gen; let i = 0;
+  list = list.map(spk).filter(Boolean);
+  const nx = () => {
+    if (my !== TTS.gen) return;
+    if (i >= list.length) { TTS.on = false; TTS.what = null; qaUI(); return; }
+    const u = mkUtt(list[i++]); u.onend = nx;
+    u.onerror = (e) => { if (my !== TTS.gen || (e && (e.error === 'interrupted' || e.error === 'canceled'))) return; TTS.on = false; TTS.what = null; qaUI(); };
+    SY.speak(u);
+  };
+  qaUI(); if (delay) setTimeout(nx, delay); else nx();
+}
+function qaUI() {
+  const a = document.getElementById('qaRead'), b = document.getElementById('qaAns');
+  if (a) a.textContent = TTS.on && TTS.what === 'q' ? '■ Stop' : '🔊 Read';
+  if (b) b.textContent = TTS.on && TTS.what === 'a' ? '■ Stop' : '🔊 Read answer';
+}
+const P = (s) => plain(fmt(String(s)));
+function uSpeech(u, key) {
+  const out = [P(u.q)];
+  if (u.t === 'mc' || u.t === 'ms') {
+    if (u.t === 'ms') out.push(`Select ${u.a.length} answers.`);
+    perm(key, u.c.length).forEach((j, pos) => out.push(`${L[pos]}. ${P(u.c[j])}.`));
+  } else if (u.t === 'tf') out.push('True, or false?');
+  else if (u.t === 'fill' || u.t === 'num') out.push('Type your answer.');
+  else if (u.t === 'order') { const o = S.resp[key] || u.items.map((x, i) => i); out.push('Put these in order: ' + o.map((j) => P(u.items[j])).join('. ') + '.'); }
+  else if (u.t === 'match') out.push('Items: ' + u.pairs.map((p) => P(p[0])).join('. ') + '.', 'Choices: ' + [...new Set(u.pairs.map((p) => p[1]))].join('. ') + '.');
+  else if (u.t === 'cat') out.push('Items: ' + u.items.map((it) => P(it[0])).join('. ') + '.', 'Groups: ' + u.buckets.join('. ') + '.');
+  else if (u.t === 'grid') {
+    const fixed = u.cols.map((c, ci) => (c[1] ? -1 : ci)).filter((ci) => ci >= 0), pick = u.cols.filter((c) => c[1]).map((c) => c[0]);
+    out.push(`Choose the ${pick.join(' and ')} for each row.`);
+    u.rows.forEach((row, ri) => out.push(`Row ${ri + 1}: ` + fixed.filter((ci) => u.cols[ci][0] !== '#').map((ci) => `${u.cols[ci][0]} ${P(row[ci])}`).join(', ') + '.'));
+  }
+  else if (u.t === 'lines') out.push('Select the matching lines in the log.');
+  return out;
+}
+function qSpeech(q) {
+  const id = S.qids[S.idx], out = [`Question ${S.idx + 1}.`];
+  if (q.t !== 'pbq') return out.concat(uSpeech(q, id));
+  out.push(`Performance-based question: ${q.title}.`, P(q.q));
+  q.tasks.forEach((t, i) => { out.push(`Task ${i + 1} of ${q.tasks.length}.`); out.push(...uSpeech(t, id + '|' + i)); });
+  return out;
+}
+function aSpeech() {
+  const f = document.querySelector('#view .fb'); if (!f) return [];
+  const c = f.cloneNode(true); c.querySelectorAll('.muted.small,button').forEach((x) => x.remove());
+  const out = [...c.children].map((x) => x.innerText), q = S && getQ(S.qids[S.idx]);
+  let extra = '';
+  if (q && q.t === 'match') extra = 'Correct matches: ' + q.pairs.map((p) => `${plain(fmt(p[0]))}, goes with ${p[1]}`).join('. ') + '.';
+  if (q && q.t === 'order') extra = 'Correct order: ' + q.items.map((x, i) => `${i + 1}, ${plain(fmt(x))}`).join('. ') + '.';
+  if (q && q.t === 'cat') extra = 'Correct groups: ' + q.items.map((it) => `${plain(fmt(it[0]))}, ${q.buckets[it[1]] != null ? q.buckets[it[1]] : it[1]}`).join('. ') + '.';
+  if (extra) out.splice(1, 0, extra);
+  return out;
 }
 function ttsJump(d) { const n = ttsItems().length, was = TTS.on; ttsHalt(); TTS.i = Math.max(0, Math.min(n - 1, TTS.i + d)); if (was) { TTS.on = true; ttsSpeak(); } else ttsUI(); }
 function ttsPanel() {
@@ -329,7 +390,7 @@ async function start(o) {
   if (!o.qids.length) { toast('No questions match these settings.'); return; }
   if (S && !S.done && S.mode === 'exam' && !(await ask('You have an exam in progress. Replace it with this new session?', 'Replace exam'))) return;
   S = { mode: o.mode || 'practice', title: o.title, qids: o.qids, idx: 0, resp: {}, chk: {}, perm: {}, t0: Date.now(), limit: o.limit || 0, instant: o.mode === 'exam' ? false : o.instant !== false, done: false, gen: o.gen || null, res: null };
-  UI.chip = null; saveS(); go('#quiz');
+  UI.chip = null; TTS.qkey = null; saveS(); go('#quiz');
 }
 async function finish(force) {
   if (!S || S.done) return;
@@ -408,6 +469,9 @@ const CMD = {
   ttsplay: () => { if (TTS.on) { ttsHalt(); ttsUI(); } else { if (TTS.i >= ttsItems().length) TTS.i = 0; TTS.on = true; ttsSpeak(); } },
   ttsstop: () => { ttsHalt(); TTS.i = 0; ttsUI(); },
   ttsprev: () => ttsJump(-1), ttsnext: () => ttsJump(1),
+  qread: () => { if (TTS.on && TTS.what === 'q') { ttsHalt(); qaUI(); return; } sayList(qSpeech(getQ(S.qids[S.idx])), 'q'); },
+  qans: () => { if (TTS.on && TTS.what === 'a') { ttsHalt(); qaUI(); return; } sayList(aSpeech(), 'a'); },
+  qauto: () => { TTS.qauto = !TTS.qauto; LS.set('ttsQAuto', TTS.qauto); if (!TTS.qauto) ttsHalt(); TTS.qkey = null; vQuiz(); },
   finish: () => finish(),
   flag: () => { const id = S.qids[S.idx]; if (FL[id]) delete FL[id]; else FL[id] = 1; save(); vQuiz(); },
   exit: () => go('#dashboard'),
@@ -610,7 +674,7 @@ function vQuiz(keepScroll) {
   let fb = '';
   if (rev) {
     const g = gradeQ(q), cls = g >= 0.999 ? 'ok' : g > 0 ? 'part' : 'bad';
-    fb = `<div class="fb ${cls}"><h3>${g >= 0.999 ? '✓ Correct' : g > 0 ? `◐ Partially correct (${pct(g)})` : '✗ Incorrect'}</h3>${answerText(q)}${q.e ? `<div style="margin-top:6px">${fmt(q.e)}</div>` : ''}${OBJ[q.o] ? `<div class="muted small" style="margin-top:8px">Objective <a href="#study-${String(q.o).replace('.', '-')}">${q.o} – ${esc(OBJ[q.o].title)}</a></div>` : ''}</div>`;
+    fb = `<div class="fb ${cls}">${SY ? '<button class="btn sm ghost" id="qaAns" data-act="run" data-fn="qans" style="float:right">🔊 Read answer</button>' : ''}<h3>${g >= 0.999 ? '✓ Correct' : g > 0 ? `◐ Partially correct (${pct(g)})` : '✗ Incorrect'}</h3>${answerText(q)}${q.e ? `<div style="margin-top:6px">${fmt(q.e)}</div>` : ''}${OBJ[q.o] ? `<div class="muted small" style="margin-top:8px">Objective <a href="#study-${String(q.o).replace('.', '-')}">${q.o} – ${esc(OBJ[q.o].title)}</a></div>` : ''}</div>`;
   }
   const last = S.idx === S.qids.length - 1, nAns = S.qids.filter((x) => qAnswered(getQ(x))).length;
   const showChk = !S.done && S.instant && !S.chk[id];
@@ -622,8 +686,9 @@ function vQuiz(keepScroll) {
   }).join('');
   V.innerHTML = `<div class="qwrap"><div class="card ${rev ? 'locked' : ''}">
     <div class="qhead"><b>Question ${S.idx + 1} of ${S.qids.length}</b>${d ? `<span class="pill" style="color:${d.color};border-color:${d.color}">${q.o} · ${esc(d.name)}</span>` : '<span class="pill">Acronyms</span>'}<span class="pill">${TL[q.t]}</span><span class="grow"></span>
+    ${SY ? '<button class="btn sm ghost" id="qaRead" data-act="run" data-fn="qread">🔊 Read</button>' : ''}
     ${S.done ? '' : `<button class="btn sm ${FL[id] ? 'on' : 'ghost'}" data-act="run" data-fn="flag">⚑ ${FL[id] ? 'Flagged' : 'Flag'}</button>`}</div>
-    ${body}${fb}
+    <div class="qbody">${body}</div>${fb}
     <div class="qfoot"><button class="btn" data-act="run" data-fn="prev" ${S.idx === 0 ? 'disabled' : ''}>← Previous</button><span class="grow"></span>
     ${showChk ? `<button class="btn pri" data-act="run" data-fn="check">Check answer</button>` : ''}
     ${last ? (S.done ? `<button class="btn pri" data-act="run" data-fn="results">Results</button>` : `<button class="btn ${showChk ? '' : 'pri'}" data-act="run" data-fn="finish">Finish ✓</button>`) : `<button class="btn ${showChk ? '' : 'pri'}" data-act="run" data-fn="next">Next →</button>`}</div>
@@ -633,10 +698,20 @@ function vQuiz(keepScroll) {
    <div class="navgrid">${nav}</div>
    <div class="legend"><span><i style="background:var(--sel);border-color:var(--acc)"></i>answered</span><span><i style="background:var(--okbg);border-color:var(--ok)"></i>correct</span><span><i style="background:var(--badbg);border-color:var(--bad)"></i>wrong</span><span><i style="background:var(--warn)"></i>flagged</span></div>
    <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px">${S.done ? `<button class="btn" data-act="run" data-fn="results">← Back to results</button>` : `<button class="btn pri" data-act="run" data-fn="finish">${S.mode === 'exam' ? 'Submit exam' : 'Finish & score'}</button><button class="btn ghost" data-act="run" data-fn="exit">Save &amp; exit</button>`}</div>
+   ${SY ? `<label class="check" style="margin-top:12px"><input type="checkbox" data-act="run" data-fn="qauto" ${TTS.qauto ? 'checked' : ''}><span class="small">🔊 Auto-read questions${S.mode === 'exam' && !S.done ? '' : ' &amp; answers'}</span></label>` : ''}
    <div class="muted small" style="margin-top:10px"><span class="kbd">1-6</span> pick · <span class="kbd">←→</span> move · <span class="kbd">F</span> flag · <span class="kbd">Enter</span> ${S.instant ? 'check' : 'next'}</div>
   </div></div>`;
   if (keepScroll === true) window.scrollTo(0, 0); else window.scrollTo(0, sy);
   updResume(); tick();
+  const qk = id + '|' + (rev ? 1 : 0);
+  if (qk !== TTS.qkey) {
+    const prev = TTS.qkey; TTS.qkey = qk;
+    if (TTS.qauto && SY) {
+      if (rev && prev === id + '|0') sayList(aSpeech(), 'a', 450); // just checked: read the result
+      else sayList(rev ? qSpeech(q).concat(aSpeech()) : qSpeech(q), rev ? 'a' : 'q', 150);
+    } else if (TTS.on) ttsHalt();
+  }
+  qaUI();
 }
 
 function vResults() {
